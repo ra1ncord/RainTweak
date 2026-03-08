@@ -135,10 +135,6 @@ jobs:
         run: |
           curl -L -o discord.ipa ${{ github.event.inputs.ipa_url || inputs.ipa_url }}
 
-      - name: Download IPA icons
-        run: |
-          curl -L -o ipa-icons.zip https://raw.githubusercontent.com/pyoncord/assets/main/ipa-icons.zip
-
       - name: Clone OpenInDiscord
         uses: actions/checkout@v4
         with:
@@ -172,18 +168,12 @@ jobs:
           echo "ROOTLESS_DEB_FILE_NAME=$ROOTLESS_DEB_FILE_NAME" >> $GITHUB_ENV
           echo "APP_NAME=$NAME" >> $GITHUB_ENV
 
-      - name: Run patcher
-        run: |
-          curl -L -o patcher https://github.com/amsyarasyiq/bunny-ipa-patcher/releases/download/release-pyon/patcher.mac-amd64
-          chmod +x patcher
-          ./patcher -d discord.ipa -o discord.ipa -i ./ipa-icons.zip
-
       - name: Install cyan
         run: pip install --force-reinstall https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip Pillow
 
       - name: Inject tweak and extension
         run: |
-          cyan -duwsgq -i discord.ipa -o ${{ env.APP_NAME }}.ipa -f ${{ env.ROOTLESS_DEB_FILE_NAME }} OpenInDiscord/build/OpenInDiscord.appex
+          cyan -uwsgq -i discord.ipa -o ${{ env.APP_NAME }}.ipa -f ${{ env.ROOTLESS_DEB_FILE_NAME }} OpenInDiscord/build/OpenInDiscord.appex
 
       - name: Upload ipa as artifact
         uses: actions/upload-artifact@v4
