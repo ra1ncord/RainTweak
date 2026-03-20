@@ -8,7 +8,7 @@
     self = [super init];
     if (self) {
         self.customLoadUrlEnabled = NO;
-        self.customLoadUrl        = [NSURL URLWithString:@"http://localhost:4040/kettu.js"];
+        self.customLoadUrl        = [NSURL URLWithString:@"http://localhost:4040/Rain.js"];
     }
     return self;
 }
@@ -51,7 +51,7 @@
 + (instancetype)defaultConfig {
     LoaderConfig *config        = [[LoaderConfig alloc] init];
     config.customLoadUrlEnabled = NO;
-    config.customLoadUrl        = [NSURL URLWithString:@"http://localhost:4040/kettu.js"];
+    config.customLoadUrl        = [NSURL URLWithString:@"http://localhost:4040/Rain.js"];
     return config;
 }
 

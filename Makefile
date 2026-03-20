@@ -5,15 +5,15 @@ THEOS_PACKAGE_SCHEME = rootless
 FINALPACKAGE = 1
 
 # this doesnt work on my machine, i guess fish is stupid with paths
-include $(THEOS)/makefiles/common.mk
-# include /home/cocobo1/theos/makefiles/common.mk
+#include $(THEOS)/makefiles/common.mk
+include /home/cocobo1/theos/makefiles/common.mk
 
-TWEAK_NAME = KettuTweak
+TWEAK_NAME = RainTweak
 BUNDLE_NAME = BunnyResources
 
-KettuTweak_FILES = $(wildcard Sources/*.x Sources/*.m Sources/**/*.x Sources/**/*.m)
-KettuTweak_CFLAGS = -fobjc-arc -DPACKAGE_VERSION='@"$(THEOS_PACKAGE_BASE_VERSION)"' -I$(THEOS_PROJECT_DIR)/Headers
-KettuTweak_FRAMEWORKS = Foundation UIKit CoreGraphics CoreText CoreFoundation UniformTypeIdentifiers
+RainTweak_FILES = $(wildcard Sources/*.x Sources/*.m Sources/**/*.x Sources/**/*.m)
+RainTweak_CFLAGS = -fobjc-arc -DPACKAGE_VERSION='@"$(THEOS_PACKAGE_BASE_VERSION)"' -I$(THEOS_PROJECT_DIR)/Headers
+RainTweak_FRAMEWORKS = Foundation UIKit CoreGraphics CoreText CoreFoundation UniformTypeIdentifiers
 
 BunnyResources_INSTALL_PATH = "/Library/Application\ Support/"
 BunnyResources_RESOURCE_DIRS = Resources

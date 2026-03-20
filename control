@@ -1,11 +1,11 @@
-Package: cocobo1.kettu.tweak
-Name: KettuTweak
-Version: 2.0.0
+Package: dev.raincord.tweak
+Name: RainTweak
+Version: 1.0.0
 Architecture: iphoneos-arm
-Description: A tweak to inject Kettu into Discord
+Description: A tweak to inject Rain into Discord
 Maintainer: cocobo1
 Author: cocobo1
-Icon: <https://codeberg.org/cocobo1/Kettu/raw/branch/main/src/assets/icons/kettu.png>
+Icon: <https://codeberg.org/raincord/rain/raw/branch/main/src/assets/rain.png>
 Section: Tweaks
 Depends: mobilesubstrate (>= 0.9.5000)
 Conflicts: app.enmity, mod.vendetta, app.unbound, com.cloudysnow.btloader, app.pyoncord

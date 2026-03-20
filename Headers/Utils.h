@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-@class KettuTweakSettingsViewController;
+@class RainTweakSettingsViewController;
 
 extern BOOL isJailbroken;
 BOOL        isSafeModeEnabled(void);

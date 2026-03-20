@@ -1,10 +1,10 @@
-# KettuTweak
+# RainTweak
 
-Tweak to inject Kettu into discord
+Tweak to inject Rain into discord
 
 ## Installation
 
-The latest builds can be found in the [Releases](https://github.com/C0C0B01/KettuTweak/releases) tab.
+The latest builds can be found in the [Releases](https://codeberg.org/raincord/RainTweak/releases) tab.
 
 <details>
 <summary>Issues & Workaround</summary>

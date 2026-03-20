@@ -8,13 +8,247 @@
 #import "Themes.h"
 #import "Utils.h"
 
+// todo: probably move this out of the tweak file, it would make this a lot cleaner and orangised
+// however making this was painful anyway, so we can delay this until iOS switch to bridgeless and
+// this needs a rewrite anyway
+typedef void (^RCTPromiseResolveBlock)(id _Nullable result);
+typedef void (^RCTPromiseRejectBlock)(NSString *_Nullable code, NSString *_Nullable message,
+                                      NSError *_Nullable error);
+typedef id _Nullable (^BridgeMethodCallback)(NSArray *_Nonnull args);
+
+@interface BridgeRegistry : NSObject
++ (instancetype _Nonnull)shared;
+- (void)registerMethod:(NSString *_Nonnull)name callback:(BridgeMethodCallback _Nonnull)cb;
+- (void)clearMethods;
+- (NSDictionary *_Nullable)dispatchPayload:(NSDictionary *_Nonnull)payload;
+@end
+
+@implementation BridgeRegistry
+{
+    NSMutableDictionary<NSString *, BridgeMethodCallback> *_methods;
+    dispatch_queue_t                                       _queue;
+}
+
++ (instancetype)shared
+{
+    static BridgeRegistry *instance;
+    static dispatch_once_t token;
+    dispatch_once(&token, ^{ instance = [[BridgeRegistry alloc] init]; });
+    return instance;
+}
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self)
+    {
+        _methods = [NSMutableDictionary dictionary];
+        _queue   = dispatch_queue_create("rain.bridge", DISPATCH_QUEUE_SERIAL);
+    }
+    return self;
+}
+
+- (void)registerMethod:(NSString *)name callback:(BridgeMethodCallback)cb
+{
+    dispatch_sync(_queue, ^{
+        if (self->_methods[name])
+            BunnyLog(@"[Bridge] Overwriting method '%@'", name);
+        self->_methods[name] = [cb copy];
+    });
+}
+
+- (void)clearMethods
+{
+    dispatch_sync(_queue, ^{ [self->_methods removeAllObjects]; });
+    BunnyLog(@"[Bridge] Methods cleared");
+}
+
+- (NSDictionary *)dispatchPayload:(NSDictionary *)payload
+{
+    NSDictionary *rain = payload[@"rain"];
+    if (!rain || ![rain isKindOfClass:[NSDictionary class]])
+        return nil;
+
+    NSString *name = rain[@"method"];
+    NSArray  *args = rain[@"args"];
+    if (![name isKindOfClass:[NSString class]])
+        return @{@"error" : @"Bridge payload missing 'method' key"};
+    if (!args || ![args isKindOfClass:[NSArray class]])
+        args = @[];
+
+    __block BridgeMethodCallback cb;
+    dispatch_sync(_queue, ^{ cb = self->_methods[name]; });
+
+    if (!cb)
+        return @{@"error" : [NSString stringWithFormat:@"Method not registered: %@", name]};
+
+    @try
+    {
+        id raw    = cb(args);
+        id result = (raw == nil) ? [NSNull null] : raw;
+        return @{@"result" : result};
+    }
+    @catch (NSException *e)
+    {
+        NSString *msg = [NSString stringWithFormat:@"%@: %@", e.name, e.reason ?: @"(no reason)"];
+        BunnyLog(@"[Bridge] Exception in '%@': %@", name, msg);
+        return @{@"error" : msg};
+    }
+}
+
+@end
+
 static NSURL         *source;
 static NSString      *bunnyPatchesBundlePath;
 static NSURL         *pyoncordDirectory;
 static LoaderConfig  *loaderConfig;
 static NSTimeInterval shakeStartTime = 0;
 static BOOL           isShaking      = NO;
-id                    gBridge        = nil;
+
+static NSURL *resolveDownloadURL(void)
+{
+    LoaderConfig *fresh = [LoaderConfig getLoaderConfig];
+    if (fresh.customLoadUrlEnabled && fresh.customLoadUrl)
+    {
+        return fresh.customLoadUrl;
+    }
+    // todo: maybe we shoudlnt hardcode this?
+    return [NSURL
+        URLWithString:@"https://codeberg.org/raincord/rain/releases/download/latest/rain.96.hbc"];
+}
+
+static BOOL downloadBundle(BOOL isExplicit)
+{
+    NSURL         *bundleFileURL = [pyoncordDirectory URLByAppendingPathComponent:@"bundle.js"];
+    NSURL         *etagFileURL   = [pyoncordDirectory URLByAppendingPathComponent:@"etag.txt"];
+    NSFileManager *fm            = [NSFileManager defaultManager];
+
+    NSURL *targetURL = resolveDownloadURL();
+    if (!targetURL)
+    {
+        return NO;
+    }
+    BunnyLog(@"[Updater] Fetching bundle (explicit=%d): %@", isExplicit, targetURL.absoluteString);
+
+    NSMutableURLRequest *req =
+        [NSMutableURLRequest requestWithURL:targetURL
+                                cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
+                            timeoutInterval:15.0];
+
+    // Only attach ETag on non-explicit fetches — explicit calls must force a fresh download.
+    if (!isExplicit)
+    {
+        NSString *etag = [NSString stringWithContentsOfURL:etagFileURL
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:nil];
+        if (etag && [fm fileExistsAtPath:bundleFileURL.path])
+            [req setValue:etag forHTTPHeaderField:@"If-None-Match"];
+    }
+
+    __block BOOL     success = NO;
+    dispatch_group_t group   = dispatch_group_create();
+    dispatch_group_enter(group);
+
+    NSURLSession *session = [NSURLSession
+        sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
+
+    [[session dataTaskWithRequest:req
+                completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                    if ([response isKindOfClass:[NSHTTPURLResponse class]])
+                    {
+                        NSHTTPURLResponse *http = (NSHTTPURLResponse *) response;
+
+                        if (http.statusCode == 200 && data.length > 0)
+                        {
+                            [data writeToURL:bundleFileURL atomically:YES];
+
+                            NSString *newEtag = http.allHeaderFields[@"Etag"];
+                            if (newEtag)
+                                [newEtag writeToURL:etagFileURL
+                                         atomically:YES
+                                           encoding:NSUTF8StringEncoding
+                                              error:nil];
+                            else
+                                [fm removeItemAtURL:etagFileURL error:nil];
+
+                            cleanupBundleBackup();
+                            success = YES;
+                        }
+                        else if (http.statusCode == 304)
+                        {
+                            cleanupBundleBackup();
+                            success = YES;
+                        }
+                        else
+                        {
+                            // fail withoput a care, they probably just have bad internet tbh
+                        }
+                    }
+                    else if (error)
+                    {
+                        BunnyLog(@"[Updater] Download error: %@", error.localizedDescription);
+                    }
+
+                    // if we have no usable bundle at all, try restoring from backup
+                    if (!success && ![fm fileExistsAtPath:bundleFileURL.path])
+                    {
+                        BunnyLog(@"[Updater] No bundle available, attempting restore from backup");
+                        if (restoreBundleFromBackup())
+                            BunnyLog(@"[Updater] Restored from backup");
+                        else
+                            BunnyLog(@"[Updater] No backup to restore");
+                    }
+
+                    dispatch_group_leave(group);
+                }] resume];
+
+    dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+    return success;
+}
+
+static void registerBridgeMethods(void)
+{
+    BridgeRegistry *b = [BridgeRegistry shared];
+
+    [b registerMethod:@"updater.clear"
+             callback:^id(NSArray *args) {
+                 NSFileManager *fm = [NSFileManager defaultManager];
+                 [fm removeItemAtURL:[pyoncordDirectory URLByAppendingPathComponent:@"bundle.js"]
+                               error:nil];
+                 [fm removeItemAtURL:[pyoncordDirectory URLByAppendingPathComponent:@"etag.txt"]
+                               error:nil];
+                 BunnyLog(@"[Updater] Cache cleared via bridge");
+                 return nil;
+             }];
+
+    [b registerMethod:@"updater.download"
+             callback:^id(NSArray *args) {
+                 BunnyLog(@"[Updater] updater.download bridge method called");
+                 dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                     BunnyLog(@"[Updater] Background block executing");
+                     LoaderConfig *cfg = [LoaderConfig getLoaderConfig];
+                     BunnyLog(@"[Updater] customLoadUrlEnabled=%d url=%@", cfg.customLoadUrlEnabled,
+                              cfg.customLoadUrl.absoluteString);
+                     downloadBundle(YES);
+                     BunnyLog(@"[Updater] downloadBundle returned");
+                 });
+                 return nil;
+             }];
+
+    [b registerMethod:@"updater.reload"
+             callback:^id(NSArray *args) {
+                 dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                     BunnyLog(@"[Updater] Explicit download + reload started");
+                     downloadBundle(YES);
+                     dispatch_async(dispatch_get_main_queue(), ^{
+                         UIWindow *w = [UIApplication sharedApplication].windows.firstObject;
+                         if (w.rootViewController)
+                             reloadApp(w.rootViewController);
+                     });
+                 });
+                 return nil;
+             }];
+}
 
 %hook RCTCxxBridge
 
@@ -24,6 +258,10 @@ id                    gBridge        = nil;
     {
         return %orig;
     }
+
+    [[BridgeRegistry shared] clearMethods];
+    registerBridgeMethods();
+    BunnyLog(@"[Bridge] Native bridge ready for new JS context");
 
     gBridge = self;
     BunnyLog(@"Stored bridge reference: %@", gBridge);
@@ -53,107 +291,18 @@ id                    gBridge        = nil;
     __block NSData *bundle =
         [NSData dataWithContentsOfURL:[pyoncordDirectory URLByAppendingPathComponent:@"bundle.js"]];
 
-    dispatch_group_t group = dispatch_group_create();
-    dispatch_group_enter(group);
+    BOOL shouldDownload = loaderConfig.customLoadUrlEnabled || (bundle == nil);
 
-    NSURL *bundleUrl;
-    if (loaderConfig.customLoadUrlEnabled && loaderConfig.customLoadUrl)
+    if (shouldDownload)
     {
-        bundleUrl = loaderConfig.customLoadUrl;
-        BunnyLog(@"Using custom load URL: %@", bundleUrl.absoluteString);
+        downloadBundle(NO);
+        bundle = [NSData
+            dataWithContentsOfURL:[pyoncordDirectory URLByAppendingPathComponent:@"bundle.js"]];
     }
     else
     {
-        bundleUrl = [NSURL
-            URLWithString:@"https://codeberg.org/cocobo1/Kettu/raw/branch/dist/kettu.min.js"];
-        BunnyLog(@"Using default bundle URL: %@", bundleUrl.absoluteString);
+        BunnyLog(@"[Updater] Skipping download: bundle cached, no custom URL");
     }
-
-    NSMutableURLRequest *bundleRequest =
-        [NSMutableURLRequest requestWithURL:bundleUrl
-                                cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
-                            timeoutInterval:3.0];
-
-    NSString *bundleEtag = [NSString
-        stringWithContentsOfURL:[pyoncordDirectory URLByAppendingPathComponent:@"etag.txt"]
-                       encoding:NSUTF8StringEncoding
-                          error:nil];
-    if (bundleEtag && bundle)
-    {
-        [bundleRequest setValue:bundleEtag forHTTPHeaderField:@"If-None-Match"];
-    }
-
-    NSURLSession *session            = [NSURLSession
-        sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
-    __block BOOL  downloadSuccessful = NO;
-
-    [[session
-        dataTaskWithRequest:bundleRequest
-          completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-              if ([response isKindOfClass:[NSHTTPURLResponse class]])
-              {
-                  NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *) response;
-                  if (httpResponse.statusCode == 200 && data && data.length > 0)
-                  {
-                      bundle             = data;
-                      downloadSuccessful = YES;
-                      [bundle
-                          writeToURL:[pyoncordDirectory URLByAppendingPathComponent:@"bundle.js"]
-                          atomically:YES];
-
-                      NSString *etag = [httpResponse.allHeaderFields objectForKey:@"Etag"];
-                      if (etag)
-                      {
-                          [etag
-                              writeToURL:[pyoncordDirectory URLByAppendingPathComponent:@"etag.txt"]
-                              atomically:YES
-                                encoding:NSUTF8StringEncoding
-                                   error:nil];
-                      }
-
-                      BunnyLog(@"Bundle download successful, cleaning up backup");
-                      cleanupBundleBackup();
-                  }
-                  else if (httpResponse.statusCode == 304)
-                  {
-                      BunnyLog(@"Bundle not modified (304), cleaning up backup");
-                      downloadSuccessful = YES;
-                      cleanupBundleBackup();
-                  }
-                  else
-                  {
-                      BunnyLog(@"Bundle download failed with status: %ld",
-                               (long) httpResponse.statusCode);
-                  }
-              }
-              else if (error)
-              {
-                  BunnyLog(@"Bundle download error: %@", error.localizedDescription);
-              }
-
-              if (!downloadSuccessful && !bundle)
-              {
-                  BunnyLog(@"No bundle available, attempting to restore from backup");
-                  if (restoreBundleFromBackup())
-                  {
-                      bundle = [NSData
-                          dataWithContentsOfURL:[pyoncordDirectory
-                                                    URLByAppendingPathComponent:@"bundle.js"]];
-                      if (bundle)
-                      {
-                          BunnyLog(@"Successfully restored bundle from backup");
-                      }
-                  }
-                  else
-                  {
-                      BunnyLog(@"Failed to restore bundle from backup");
-                  }
-              }
-
-              dispatch_group_leave(group);
-          }] resume];
-
-    dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
 
     NSData *themeData =
         [NSData dataWithContentsOfURL:[pyoncordDirectory
@@ -178,7 +327,7 @@ id                    gBridge        = nil;
             }
 
             NSString *jsCode =
-                [NSString stringWithFormat:@"globalThis.__PYON_LOADER__.storedTheme=%@",
+                [NSString stringWithFormat:@"globalThis.__RAIN_LOADER__.storedTheme=%@",
                                            [[NSString alloc] initWithData:themeData
                                                                  encoding:NSUTF8StringEncoding]];
             %orig([jsCode dataUsingEncoding:NSUTF8StringEncoding], source, async);
@@ -241,9 +390,7 @@ id                    gBridge        = nil;
                     BunnyLog(@"Executing preload JS file %@", fileURL.absoluteString);
                     NSData *data = [NSData dataWithContentsOfURL:fileURL];
                     if (data)
-                    {
                         %orig(data, source, async);
-                    }
                 }
             }
         }
@@ -254,6 +401,24 @@ id                    gBridge        = nil;
     }
 
     %orig(script, url, async);
+}
+
+%end
+
+%hook RCTFileReaderModule
+
+- (void)readAsDataURL:(NSDictionary *)blob
+              resolve:(RCTPromiseResolveBlock)resolve
+               reject:(RCTPromiseRejectBlock)reject
+{
+    NSDictionary *result = [[BridgeRegistry shared] dispatchPayload:blob];
+    if (result)
+    {
+        BunnyLog(@"[Bridge] Handled readAsDataURL for method: %@", blob[@"rain"][@"method"]);
+        resolve(result);
+        return;
+    }
+    %orig;
 }
 
 %end
@@ -274,13 +439,9 @@ id                    gBridge        = nil;
 {
     if (motion == UIEventSubtypeMotionShake && isShaking)
     {
-        NSTimeInterval currentTime   = [[NSDate date] timeIntervalSince1970];
-        NSTimeInterval shakeDuration = currentTime - shakeStartTime;
-
+        NSTimeInterval shakeDuration = [[NSDate date] timeIntervalSince1970] - shakeStartTime;
         if (shakeDuration >= 0.5 && shakeDuration <= 2.0)
-        {
             dispatch_async(dispatch_get_main_queue(), ^{ showSettingsSheet(); });
-        }
         isShaking = NO;
     }
     %orig;
@@ -292,7 +453,7 @@ id                    gBridge        = nil;
 {
     @autoreleasepool
     {
-        source = [NSURL URLWithString:@"kettu"];
+        source = [NSURL URLWithString:@"Rain"];
 
         NSString *install_prefix = @"/var/jb";
         isJailbroken             = [[NSFileManager defaultManager] fileExistsAtPath:install_prefix];
@@ -309,16 +470,10 @@ id                    gBridge        = nil;
         BunnyLog(@"Bundle path for jailed: %@", jailedPath);
 
         bunnyPatchesBundlePath = isJailbroken ? bundlePath : jailedPath;
-        BunnyLog(@"Selected bundle path: %@", bunnyPatchesBundlePath);
-
-        BOOL bundleExists =
-            [[NSFileManager defaultManager] fileExistsAtPath:bunnyPatchesBundlePath];
-        BunnyLog(@"Bundle exists at path: %d", bundleExists);
 
         if (jbPathExists)
         {
             BunnyLog(@"Jailbreak path exists, attempting to load bundle from: %@", bundlePath);
-
             BOOL      bundleExists = [[NSFileManager defaultManager] fileExistsAtPath:bundlePath];
             NSBundle *testBundle   = [NSBundle bundleWithPath:bundlePath];
 
@@ -329,7 +484,7 @@ id                    gBridge        = nil;
             }
             else
             {
-                BunnyLog(@"Bundle not found or invalid at jailbroken path, falling back to jailed");
+                BunnyLog(@"Bundle not found at jailbroken path, falling back to jailed");
                 bunnyPatchesBundlePath = jailedPath;
             }
         }
@@ -348,7 +503,6 @@ id                    gBridge        = nil;
             BunnyLog(@"  Jailbroken path: %@", bundlePath);
             BunnyLog(@"  Jailed path: %@", jailedPath);
             BunnyLog(@"  /var/jb exists: %d", jbPathExists);
-
             bunnyPatchesBundlePath = nil;
         }
         else
@@ -359,13 +513,9 @@ id                    gBridge        = nil;
                 [[NSFileManager defaultManager] contentsOfDirectoryAtPath:bunnyPatchesBundlePath
                                                                     error:&error];
             if (error)
-            {
                 BunnyLog(@"Error listing bundle contents: %@", error);
-            }
             else
-            {
                 BunnyLog(@"Bundle contents: %@", bundleContents);
-            }
         }
 
         pyoncordDirectory = getPyoncordDirectory();
@@ -373,5 +523,9 @@ id                    gBridge        = nil;
         [loaderConfig loadConfig];
 
         %init;
+
+        [[BridgeRegistry shared] clearMethods];
+        registerBridgeMethods();
+        BunnyLog(@"[Bridge] Native bridge initialised");
     }
 }

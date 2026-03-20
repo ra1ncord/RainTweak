@@ -6,6 +6,7 @@
 #import <sys/utsname.h>
 
 extern id gBridge;
+id gBridge = nil;
 
 BOOL isJailbroken = NO;
 
@@ -156,7 +157,7 @@ void setCustomBundleURL(NSURL *url, UIViewController *presenter) {
 void resetCustomBundleURL(UIViewController *presenter) {
     LoaderConfig *config        = [LoaderConfig getLoaderConfig];
     config.customLoadUrlEnabled = NO;
-    config.customLoadUrl        = [NSURL URLWithString:@"http://localhost:4040/kettu.js"];
+    config.customLoadUrl        = [NSURL URLWithString:@"http://localhost:4040/Rain.js"];
     [config saveConfig];
     removeCachedBundle();
     gracefulExit(presenter);
@@ -246,7 +247,7 @@ void showBundleSelector(UIViewController *presenter) {
                                      preferredStyle:UIAlertControllerStyleAlert];
     [presenter presentViewController:loadingAlert animated:YES completion:nil];
 
-    NSURL *url = [NSURL URLWithString:@"https://api.github.com/repos/C0C0B01/KettuTweak/branches"];
+    NSURL *url = [NSURL URLWithString:@"https://codeberg.org/api/v1/repos/raincord/RainTweak/branches"];
     NSURLSession *session = [NSURLSession
         sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
 
@@ -324,7 +325,7 @@ static void showCommitsForBranch(NSString *branch, UIViewController *presenter,
 
     NSString *commitsUrl = [NSString
         stringWithFormat:
-            @"https://api.github.com/repos/C0C0B01/KettuTweak/commits?sha=%@&per_page=10", branch];
+            @"https://codeberg.org/api/v1/repos/raincord/RainTweak/commits?sha=%@&limit=10", branch];
     NSURL *commitsURL    = [NSURL URLWithString:commitsUrl];
 
     [[session
@@ -342,10 +343,11 @@ static void showCommitsForBranch(NSString *branch, UIViewController *presenter,
                                            }
 
                                            NSError *jsonError;
-                                           NSArray *commits =
+                                           NSDictionary *commitsResponse =
                                                [NSJSONSerialization JSONObjectWithData:commitsData
                                                                                options:0
                                                                                  error:&jsonError];
+                                           NSArray *commits = commitsResponse[@"commits"];
                                            if (jsonError || !commits.count) {
                                                showErrorAlert(@"Error", @"No commits available",
                                                               nil);
@@ -390,7 +392,7 @@ static void showCommitsForBranch(NSString *branch, UIViewController *presenter,
                                                                        NSString *bundleUrl =
                                                                            [NSString
                                                                                stringWithFormat:
-                                                                                   @"https://raw.githubusercontent.com/C0C0B01/KettuTweak/%@/bundle.js",
+                                                                                   @"https://codeberg.org/raincord/RainTweak/raw/commit/%@/bundle.js",
                                                                                    sha];
                                                                        NSURL *url = [NSURL
                                                                            URLWithString:bundleUrl];
