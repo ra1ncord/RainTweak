@@ -226,10 +226,9 @@
         [body stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet
                                                                      URLQueryAllowedCharacterSet]];
 
-    NSString *urlString = [NSString
-            NSString *urlString = [NSString
-        stringWithFormat:@"https://codeberg.org/raincord/RainTweak/issues/new?title=%@&body=%@",
-                         encodedTitle, encodedBody];
+NSString *urlString = [NSString stringWithFormat:@"https://codeberg.org/raincord/RainTweak/issues/new?title=%@&body=%@",
+                     encodedTitle, encodedBody];
+
     NSURL *url          = [NSURL URLWithString:urlString];
     [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
 }
