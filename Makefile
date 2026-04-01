@@ -5,8 +5,8 @@ THEOS_PACKAGE_SCHEME = rootless
 FINALPACKAGE = 1
 
 # this doesnt work on my machine, i guess fish is stupid with paths
-#include $(THEOS)/makefiles/common.mk
-include /home/cocobo1/theos/makefiles/common.mk
+include $(THEOS)/makefiles/common.mk
+#include /home/cocobo1/theos/makefiles/common.mk
 
 TWEAK_NAME = RainTweak
 BUNDLE_NAME = BunnyResources
