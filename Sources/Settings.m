@@ -227,7 +227,8 @@
                                                                      URLQueryAllowedCharacterSet]];
 
     NSString *urlString = [NSString
-        stringWithFormat:@"https://codeberg.org/raincord/RainTweak/issues/new",
+            NSString *urlString = [NSString
+        stringWithFormat:@"https://codeberg.org/raincord/RainTweak/issues/new?title=%@&body=%@",
                          encodedTitle, encodedBody];
     NSURL *url          = [NSURL URLWithString:urlString];
     [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
